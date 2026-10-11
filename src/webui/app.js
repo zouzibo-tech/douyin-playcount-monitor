@@ -175,6 +175,85 @@ $('#btnStop').addEventListener('click', async () => {
 });
 
 /* ---------------- 结果 ---------------- */
+let sortState = { key: 'play', dir: 'desc' };
+let mixCache = [];
+
+function renderLegend(labels) {
+  const items = [['var(--lv1)', labels[1] || '达标'],
+                 ['var(--lv2)', labels[2] || ''],
+                 ['var(--lv3)', labels[3] || '']].filter((x) => x[1]);
+  const box = document.getElementById('levelLegend');
+  if (box) {
+    box.innerHTML = items
+      .map(([c, t]) => `<span><i style="background:${c}"></i>${esc(t)}</span>`).join('');
+  }
+}
+
+function sortedMixes() {
+  const s = mixCache.slice();
+  if (sortState.key === 'play') {
+    const k = sortState.dir === 'desc' ? -1 : 1;
+    s.sort((a, b) => ((a.play_vv || 0) - (b.play_vv || 0)) * k);
+    return s;
+  }
+  // 按发布日期排：没有发布日期的永远沉到最后，不混在正常数据里
+  const has = s.filter((x) => x.first_publish_at);
+  const none = s.filter((x) => !x.first_publish_at);
+  has.sort((a, b) => (a.first_publish_at < b.first_publish_at ? -1
+    : a.first_publish_at > b.first_publish_at ? 1 : 0));
+  if (sortState.dir === 'desc') has.reverse();
+  return has.concat(none);
+}
+
+function renderMixTable() {
+  const rows = sortedMixes();
+  const ar = (k) => (sortState.key === k ? (sortState.dir === 'desc' ? '▼' : '▲') : '▾');
+  const th = (k, label, w) => `<th class="sortable${sortState.key === k ? ' sorted' : ''}"
+    data-sort="${k}"${w ? ` style="width:${w}px"` : ''}>${label}<span class="arrow">${ar(k)}</span></th>`;
+
+  $('#mixTable').innerHTML = `<table><thead><tr>
+      <th>合集名</th><th>账号</th>${th('date', '发布日期', 104)}${th('play', '总播放量', 116)}
+      <th>本次增量</th><th>收藏</th>
+      <th style="width:56px">集数</th><th style="width:74px">更新至</th>
+    </tr></thead><tbody>${rows.map((m) => {
+    const lv = m.level || 0;
+    return `<tr class="${lv ? 'lv' + lv : ''}">
+      <td>${esc(m.mix_name)}${m.stale
+        ? ' <span class="tag warn" title="该合集本次未采集到，显示的是上一次的数据">未更新</span>'
+        : ''}</td>
+      <td class="faint">${esc(m.author_name || '—')}</td>
+      <td class="num faint">${m.first_publish_at || '—'}</td>
+      <td class="num">${fmt(m.play_vv)}${m.level_label
+        ? ` <span class="tag lv${m.level}">${esc(m.level_label)}</span>` : ''}</td>
+      <td class="num">${deltaHtml(m.delta)}</td>
+      <td class="num faint">${m.collect_vv || 0}</td>
+      <td class="num">${m.episode_count || '—'}</td>
+      <td class="num">${m.updated_to_episode || '—'}</td></tr>`;
+  }).join('')}</tbody></table>`;
+
+  $('#mixTable').querySelectorAll('th[data-sort]').forEach((el) => {
+    el.onclick = () => {
+      const k = el.dataset.sort;
+      if (sortState.key === k) sortState.dir = sortState.dir === 'desc' ? 'asc' : 'desc';
+      else sortState = { key: k, dir: 'desc' };
+      const sel = $('#sortSelect');
+      if (sel) sel.value = (k === 'play' ? 'play_' : 'date_') + sortState.dir;
+      renderMixTable();
+    };
+  });
+}
+
+// 顶层绑定必须做存在性检查：万一 HTML 与 JS 版本不同步（例如只替换了其一），
+// 裸访问会让整个脚本在这里中断，导致所有按钮失效。
+const sortSel = document.getElementById('sortSelect');
+if (sortSel) {
+  sortSel.addEventListener('change', (e) => {
+    const [k, d] = e.target.value.split('_');
+    sortState = { key: k, dir: d };
+    renderMixTable();
+  });
+}
+
 async function loadResult() {
   const d = await api('/api/result');
   const ov = d.overview || {};
@@ -196,22 +275,14 @@ async function loadResult() {
       : `<div class="v">${ov.stop_count || 0}</div>`}</div>`;
 
   const mixes = ov.mixes || [];
+  mixCache = mixes;
+  renderLegend(ov.labels || {});
   if (!mixes.length) {
     $('#mixTable').innerHTML = '<div class="empty">暂无数据，先去「抓取」页跑一次。</div>';
     $('#epBlocks').innerHTML = '';
     return;
   }
-  $('#mixTable').innerHTML = `<table><thead><tr>
-      <th>合集名</th><th>账号</th><th>总播放量</th><th>本次增量</th><th>收藏</th>
-      <th style="width:56px">集数</th><th style="width:74px">更新至</th>
-    </tr></thead><tbody>${mixes.map((m) => `<tr>
-      <td>${esc(m.mix_name)}${m.stale
-        ? ' <span class="tag warn" title="该合集本次未采集到，显示的是上一次的数据">未更新</span>'
-        : ''}</td>
-      <td class="faint">${esc(m.author_name || '—')}</td>
-      <td class="num">${fmt(m.play_vv)}</td><td class="num">${deltaHtml(m.delta)}</td>
-      <td class="num faint">${m.collect_vv || 0}</td><td class="num">${m.episode_count || '—'}</td>
-      <td class="num">${m.updated_to_episode || '—'}</td></tr>`).join('')}</tbody></table>`;
+  renderMixTable();
 
   $('#epBlocks').innerHTML = mixes.map((m) => {
     const eps = (d.details || {})[m.mix_id] || [];
@@ -225,7 +296,8 @@ async function loadResult() {
           <td class="num faint">${e.digg_count || 0}</td>
           <td class="num faint">${e.comment_count || 0}</td>
         </tr>`).join('')
-      : '<tr><td colspan="7" class="faint">该合集本批未逐集采集（可能被清单中其他链接复用）</td></tr>';
+      : '<tr><td colspan="7" class="faint">该合集还没有逐集播放数据'
+        + '（通常是分集抓取未成功，下次抓取会补上）</td></tr>';
     return `<details><summary><b>${esc(m.mix_name)}</b>
       <span class="faint"> · ${esc(m.author_name || '')} · 总播放 ${fmt(m.play_vv)}</span></summary>
       <table><thead><tr><th style="width:70px">集数</th><th>标题</th>
@@ -272,6 +344,9 @@ async function loadConfig() {
   $('#cfgHeadless').checked = !!c.headless;
   $('#cfgCatchup').checked = c.catch_up !== false;
   $('#cfgMixTotal').checked = !!c.fetch_mix_total;
+  $('#cfgLvSuccess').value = c.level_success;
+  $('#cfgLvHigh').value = c.level_high;
+  $('#cfgLvTop').value = c.level_top;
   $('#cfgOutdir').value = c.output_dir || '';
   $('#cfgOutdirHint').textContent = '留空 = 程序目录下的 output（推荐，换电脑不会出错）'
     + (st.effective_output_dir ? '；当前实际使用：' + st.effective_output_dir : '');
@@ -307,6 +382,9 @@ $('#btnSaveCfg').addEventListener('click', async () => {
     headless: $('#cfgHeadless').checked,
     catch_up: $('#cfgCatchup').checked,
     fetch_mix_total: $('#cfgMixTotal').checked,
+    level_success: Number($('#cfgLvSuccess').value) || 20000,
+    level_high: Number($('#cfgLvHigh').value) || 500000,
+    level_top: Number($('#cfgLvTop').value) || 1000000,
     output_dir: $('#cfgOutdir').value.trim(),
   };
   await api('/api/config', body);
@@ -323,6 +401,9 @@ $('#btnResetCfg').addEventListener('click', () => {
   $('#cfgHeadless').checked = true;
   $('#cfgCatchup').checked = true;
   $('#cfgMixTotal').checked = true;
+  $('#cfgLvSuccess').value = 20000;
+  $('#cfgLvHigh').value = 500000;
+  $('#cfgLvTop').value = 1000000;
   toast('已填入默认值，记得点「保存设置」');
 });
 
@@ -336,7 +417,7 @@ async function loadRuns() {
   $('#runsTable').innerHTML = `<table><thead><tr>
       <th style="width:150px">开始时间</th><th style="width:150px">结束时间</th>
       <th style="width:70px">成功</th><th style="width:70px">失败</th>
-      <th style="width:70px">跳过</th><th>说明</th></tr></thead><tbody>
+      <th style="width:70px">未采集</th><th>说明</th></tr></thead><tbody>
     ${runs.map((r) => `<tr>
       <td class="mono">${esc(r.started_at)}</td><td class="mono">${esc(r.finished_at || '—')}</td>
       <td class="num up">${r.ok || 0}</td><td class="num ${r.failed ? 'down' : 'faint'}">${r.failed || 0}</td>

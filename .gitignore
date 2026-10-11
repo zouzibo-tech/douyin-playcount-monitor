@@ -19,6 +19,9 @@ PLAN.md
 界面原型预览.html
 probe/
 
+# 迁移/测试临时产物（含旧库备份，属个人数据，勿入库）
+_migtest/
+
 # 探测器原始响应（体积大）
 probe/captured/
 *.log

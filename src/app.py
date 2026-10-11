@@ -279,6 +279,13 @@ def serve(port=None, open_browser=True):
     n = store.reap_stale_runs()
     if n:
         STATE.log(f"清理了 {n} 条上次异常退出留下的运行记录")
+    # 补齐可能因中途异常而漏算的首播日（对老库无副作用，缺失 create_time 时直接返回 0）
+    try:
+        m = store.backfill_first_publish()
+        if m:
+            STATE.log(f"补齐了 {m} 个合集的发布日期")
+    except Exception:
+        pass
     cfg = load_config()
     port = int(port or cfg.get("port") or 8765)
 

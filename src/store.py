@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS mixes (
   play_vv            INTEGER,
   collect_vv         INTEGER,
   updated_to_episode INTEGER,
-  episode_count      INTEGER
+  episode_count      INTEGER,
+  first_publish_at   TEXT
 );
 
 CREATE TABLE IF NOT EXISTS video_snapshots (
@@ -52,7 +53,8 @@ CREATE TABLE IF NOT EXISTS video_snapshots (
   digg_count    INTEGER,
   comment_count INTEGER,
   share_count   INTEGER,
-  collect_count INTEGER
+  collect_count INTEGER,
+  create_time   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_vs_aweme ON video_snapshots(aweme_id, fetch_date);
 CREATE INDEX IF NOT EXISTS idx_vs_mix   ON video_snapshots(mix_id, fetch_date);
@@ -86,6 +88,34 @@ CREATE TABLE IF NOT EXISTS runs (
 """
 
 
+def _ts_to_date(ts):
+    """Unix 秒 -> YYYY-MM-DD。非法值返回 None。"""
+    try:
+        ts = int(ts)
+        if ts <= 0:
+            return None
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _migrate(conn):
+    """给老库补新字段。CREATE TABLE IF NOT EXISTS 不会改已存在的表，
+    所以新增列必须走 ALTER TABLE，且要能重复执行不报错。"""
+    def _cols(table):
+        return [r["name"] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+
+    vs_cols = _cols("video_snapshots")
+    if "create_time" not in vs_cols:
+        conn.execute("ALTER TABLE video_snapshots ADD COLUMN create_time INTEGER")
+
+    m_cols = _cols("mixes")
+    if "first_publish_at" not in m_cols:
+        conn.execute("ALTER TABLE mixes ADD COLUMN first_publish_at TEXT")
+
+    conn.commit()
+
+
 def now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -103,6 +133,7 @@ def get_conn():
             _CONN.row_factory = sqlite3.Row
             _CONN.executescript(SCHEMA)
             _CONN.commit()
+            _migrate(_CONN)
         return _CONN
 
 
@@ -254,12 +285,51 @@ def save_video_snapshots(mix_id, episodes, fetch_date=None):
         x(
             """INSERT OR REPLACE INTO video_snapshots
                (aweme_id,mix_id,fetch_date,fetched_at,episode_no,
-                title,play_count,digg_count,comment_count,share_count,collect_count)
-               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                title,play_count,digg_count,comment_count,share_count,collect_count,
+                create_time)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             (e.get("aweme_id"), mix_id, fd, ts, e.get("episode_no"), e.get("title"),
              e.get("play_count"), e.get("digg_count"), e.get("comment_count"),
-             e.get("share_count"), e.get("collect_count")),
+             e.get("share_count"), e.get("collect_count"), e.get("create_time")),
         )
+    refresh_mix_first_publish(mix_id)
+
+
+def refresh_mix_first_publish(mix_id):
+    """合集首播日 = 该合集所有分集中最早的 create_time。
+
+    不用 episode_no=1，因为作者可能把合集顺序调乱，第 1 集未必是最早发的。
+    取历史全部快照的最小值：即使某天某集没采到，也不会把首播日算晚。
+    只在该合集还没有首播日、或新值更早时才写入。
+    """
+    init_db()
+    r = q(
+        """SELECT MIN(create_time) ct FROM video_snapshots
+           WHERE mix_id=? AND create_time IS NOT NULL AND create_time > 0""",
+        (mix_id,),
+    )
+    d = _ts_to_date(r[0]["ct"]) if r and r[0]["ct"] else None
+    if not d:
+        return None
+    x(
+        """UPDATE mixes SET first_publish_at=?
+           WHERE mix_id=? AND (first_publish_at IS NULL OR first_publish_at=''
+                               OR first_publish_at > ?)""",
+        (d, mix_id, d),
+    )
+    return d
+
+
+def backfill_first_publish():
+    """给库里所有还缺首播日的合集补算一次（升级老数据用）。"""
+    init_db()
+    rows = q("""SELECT mix_id FROM mixes
+                WHERE first_publish_at IS NULL OR first_publish_at=''""")
+    n = 0
+    for r in rows:
+        if refresh_mix_first_publish(r["mix_id"]):
+            n += 1
+    return n
 
 
 def delete_snapshots_of_date(fetch_date):
@@ -321,7 +391,8 @@ def mix_overview(fetch_date=None):
     fd = fetch_date or latest_date()
     if not fd:
         return []
-    mixes = q("""SELECT mix_id, mix_name, author_name, sec_uid, episode_count, cover
+    mixes = q("""SELECT mix_id, mix_name, author_name, sec_uid, episode_count, cover,
+                        first_publish_at
                  FROM mixes""")
     snaps = q("""SELECT mix_id, fetch_date, play_vv, collect_vv,
                         updated_to_episode, play_sum_calc
@@ -345,6 +416,7 @@ def mix_overview(fetch_date=None):
             "mix_id": m["mix_id"], "mix_name": m["mix_name"],
             "author_name": m["author_name"], "sec_uid": m["sec_uid"],
             "episode_count": m["episode_count"], "cover": m["cover"],
+            "first_publish_at": m.get("first_publish_at") or None,
             "play_vv": cur.get("play_vv"), "collect_vv": cur.get("collect_vv"),
             "updated_to_episode": cur.get("updated_to_episode"),
             "play_sum_calc": cur.get("play_sum_calc"),

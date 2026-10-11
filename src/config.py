@@ -34,11 +34,18 @@ DEFAULT_CONFIG = {
     "catch_up": True,
     "interval_seconds": 5,
     "max_retries": 3,
+    # 连续失败多少条后重建一次浏览器（0 = 不启用）。
+    # 只在真的连续失败时才触发，正常抓取零开销，不改变采集节奏。
+    "restart_after_fails": 5,
     "headless": True,
     "browser_channel": "msedge",
     "fetch_mix_total": True,
     "output_dir": "",              # 空 = 程序目录下的 output（便于整机拷贝）
     "port": 8765,
+    # 播放量分级阈值（可在设置页改）
+    "level_success": 20000,        # 达标线
+    "level_high": 500000,          # 优秀线
+    "level_top": 1000000,          # 爆款线
 }
 
 USER_AGENT = (

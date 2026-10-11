@@ -26,10 +26,10 @@ def main():
     if not SRC.exists():
         raise SystemExit(f"找不到源目录：{SRC}")
 
-    if PKG.exists():
-        shutil.rmtree(PKG)
-    PKG.mkdir(parents=True)
-    DST.mkdir(parents=True)
+    # 不用 rmtree/unlink：沙箱会拦截删除操作。
+    # 目录和 zip 都用覆盖写入；若担心 dist 删过文件产生残留，手动删 发布包/ 后重跑。
+    PKG.mkdir(parents=True, exist_ok=True)
+    DST.mkdir(parents=True, exist_ok=True)
 
     print("复制程序 ...")
     for item in SRC.iterdir():
@@ -37,7 +37,7 @@ def main():
             continue
         target = DST / item.name
         if item.is_dir():
-            shutil.copytree(item, target)
+            shutil.copytree(item, target, dirs_exist_ok=True)
         else:
             shutil.copy2(item, target)
     print("  已排除：", "、".join(sorted(EXCLUDE)))
@@ -46,8 +46,6 @@ def main():
         shutil.copy2(MANUAL, PKG / MANUAL.name)
 
     print("压缩 ...")
-    if ZIP.exists():
-        ZIP.unlink()
     with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for p in sorted(PKG.rglob("*")):
             if p.is_file():

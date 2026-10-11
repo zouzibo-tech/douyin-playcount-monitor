@@ -15,10 +15,12 @@
 
 | 下载 | 说明 |
 |---|---|
-| `douyin-playcount-monitor-v1.0.zip` | 程序本体，约 69 MB，解压即用 |
-| `douyin-playcount-monitor-v1.0-manual.docx` | 图文操作手册 |
+| `douyin-playcount-monitor-v1.1.zip` | 程序本体，约 72 MB，解压即用 |
+| `douyin-playcount-monitor-v1.1-manual.docx` | 图文操作手册 |
 
 > 说明：GitHub 的 Release 附件名不支持中文，所以文件名是英文的，内容与中文名一致。
+
+版本变动见 [CHANGELOG.md](CHANGELOG.md)。
 
 然后：
 

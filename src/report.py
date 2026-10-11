@@ -37,9 +37,25 @@ def _autofit(ws, widths):
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
+# 与界面等级色条同色：蓝=达标 / 橙=优秀 / 红=爆款
+LEVEL_BAR = {1: "FF4C9AFF", 2: "FFD98324", 3: "FFE5484D"}
+
+
+def _apply_level_bars(ws, mixes):
+    """在序号列左侧画一条粗色条，对应界面上的行首色条。"""
+    thin = Side(style="thin", color="D9D9D9")
+    for i, r in enumerate(mixes, start=2):
+        color = LEVEL_BAR.get(r.get("level") or 0)
+        if not color:
+            continue
+        ws.cell(row=i, column=1).border = Border(
+            left=Side(style="thick", color=color),
+            right=thin, top=thin, bottom=thin)
+
+
 def export_daily(cfg=None):
     cfg = cfg or load_config()
-    ov = analyze.overview()
+    ov = analyze.overview(cfg)
     out_dir = resolve_output_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,8 +67,8 @@ def export_daily(cfg=None):
     # ---- Sheet1 合集总览 ----
     ws = wb.active
     ws.title = "合集总览"
-    headers = ["序号", "合集名", "账号", "总播放量", "昨日总播放量",
-               "日增", "收藏量", "集数", "更新至", "分集求和(校验)", "数据日期"]
+    headers = ["序号", "合集名", "账号", "发布日期", "总播放量", "昨日总播放量",
+               "日增", "收藏量", "集数", "更新至", "分集求和(校验)", "等级", "数据日期"]
     ws.append(headers)
     prev_play = {}
     for r in ov["mixes"]:
@@ -62,14 +78,17 @@ def export_daily(cfg=None):
         p = prev_play.get(r["mix_id"])
         ws.append([
             i, r.get("mix_name"), r.get("account"),
+            r.get("first_publish_at") or "—",
             r.get("play_vv"), p if p is not None else "—",
             r.get("delta") if r.get("delta") is not None else "—",
             r.get("collect_vv"), r.get("episode_count"),
-            r.get("updated_to_episode"), r.get("play_sum_calc"), fd,
+            r.get("updated_to_episode"), r.get("play_sum_calc"),
+            r.get("level_label") or "", fd,
         ])
     _style_header(ws, len(headers))
     _style_body(ws, len(headers), len(ov["mixes"]))
-    _autofit(ws, [6, 40, 16, 14, 14, 12, 10, 8, 8, 16, 12])
+    _apply_level_bars(ws, ov["mixes"])
+    _autofit(ws, [6, 40, 16, 12, 14, 14, 12, 10, 8, 8, 16, 10, 12])
 
     # ---- Sheet2 分集明细 ----
     ws2 = wb.create_sheet("分集明细")

@@ -70,6 +70,16 @@ https://www.douyin.com/video/7693829499401653513"></textarea>
 
   <div class="panel">
     <h2>合集总览 <span id="resultDate"></span></h2>
+    <div class="sortbar">
+      <span class="hint">排序</span>
+      <select id="sortSelect">
+        <option value="play_desc">播放量 从高到低</option>
+        <option value="play_asc">播放量 从低到高</option>
+        <option value="date_desc">发布日期 最新在前</option>
+        <option value="date_asc">发布日期 最早在前</option>
+      </select>
+      <span class="legend" id="levelLegend"></span>
+    </div>
     <div id="mixTable"></div>
   </div>
 
@@ -113,7 +123,7 @@ https://www.douyin.com/video/7693829499401653513"></textarea>
     <h2>抓取参数</h2>
     <div class="setting-row">
       <div class="label">链接间隔</div>
-      <div><input type="text" id="cfgInterval" style="width:70px"> <span class="hint">秒，建议 3～8 秒</span></div>
+      <div><input type="text" id="cfgInterval" style="width:70px"> <span class="hint">秒，建议 3～8 秒。每条实际会在此值上再加 0～3 秒随机停顿（防风控），填 5 实际约 5～8 秒</span></div>
     </div>
     <div class="setting-row">
       <div class="label">失败重试次数</div>
@@ -137,6 +147,25 @@ https://www.douyin.com/video/7693829499401653513"></textarea>
       <div class="label">输出目录</div>
       <div><input type="text" id="cfgOutdir" style="width:380px">
         <div class="hint" id="cfgOutdirHint" style="margin-top:4px"></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>播放量分级 <span>决定结果页的高亮颜色，改完点保存立即生效</span></h2>
+    <div class="setting-row">
+      <div class="label">达标线</div>
+      <div><input type="text" id="cfgLvSuccess" style="width:120px">
+        <span class="hint">达到即算「测出效果」，行首显示蓝色条 + 「达标」徽章。默认 20000（2 万）</span></div>
+    </div>
+    <div class="setting-row">
+      <div class="label">优秀线</div>
+      <div><input type="text" id="cfgLvHigh" style="width:120px">
+        <span class="hint">行首橙色条。默认 500000（50 万）</span></div>
+    </div>
+    <div class="setting-row">
+      <div class="label">爆款线</div>
+      <div><input type="text" id="cfgLvTop" style="width:120px">
+        <span class="hint">行首红色条。默认 1000000（100 万）</span></div>
     </div>
   </div>
 

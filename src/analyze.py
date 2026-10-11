@@ -1,19 +1,73 @@
-"""聚合分析：总览、日增、分集占比、停涨识别。"""
+"""聚合分析：总览、日增、分集占比、停涨识别、播放量分级。"""
 from datetime import datetime
 
+from config import load_config
 import store
+
+# 等级：0 普通 / 1 达标 / 2 优秀(优秀线) / 3 爆款(爆款线)
 
 
 def _d(s):
     return s or ""
 
 
-def overview():
+def _thresholds(cfg=None):
+    """返回 (达标线, 优秀线, 爆款线)，并做归一化保证 top >= high >= success。"""
+    cfg = cfg or load_config()
+
+    def _i(k, d):
+        try:
+            v = int(cfg.get(k) or d)
+        except Exception:
+            v = d
+        return max(v, 0)
+
+    # 严格递增：即使用户把阈值填反了，三个等级也不会互相吞掉
+    s = _i("level_success", 20000)
+    h = max(_i("level_high", 500000), s + 1)
+    t = max(_i("level_top", 1000000), h + 1)
+    return s, h, t
+
+
+def _level_label(v):
+    """把阈值数字转成中文短标签，如 500000 -> '50万+'。"""
+    if not v:
+        return ""
+    if v >= 10000:
+        n = v / 10000
+        return f"{int(n)}万+" if n == int(n) else f"{n:.1f}万+"
+    return f"{v}+"
+
+
+def level_of(play, cfg=None):
+    """播放量 -> 等级 0/1/2/3。"""
+    s, h, t = _thresholds(cfg)
+    p = play or 0
+    if p >= t:
+        return 3
+    if p >= h:
+        return 2
+    if p >= s:
+        return 1
+    return 0
+
+
+def level_label(level, cfg=None):
+    """等级 -> 徽章文字。1 恒为「达标」，2/3 用对应阈值命名。"""
+    s, h, t = _thresholds(cfg)
+    return {1: "达标", 2: _level_label(h), 3: _level_label(t)}.get(level, "")
+
+
+def overview(cfg=None):
+    cfg = cfg or load_config()
     fd = store.latest_date()
     if not fd:
+        s, h, t = _thresholds(cfg)
         return {"fetch_date": None, "prev_date": None, "mixes": [],
                 "total_play": 0, "total_delta": 0, "mix_count": 0,
-                "stop_count": 0, "accounts": []}
+                "stop_count": 0, "accounts": [],
+                "thresholds": {"success": s, "high": h, "top": t},
+                "labels": {1: "达标", 2: _level_label(h), 3: _level_label(t)}}
     pd_ = store.prev_date(fd)
     rows = store.mix_overview(fd)
 
@@ -21,8 +75,13 @@ def overview():
     total_delta = sum((r.get("delta") or 0) for r in rows)
 
     for r in rows:
-        r["episodes"] = store.episodes_of(r["mix_id"], fd)
+        # 注意：不要在这里给每个合集查分集。全项目没人消费这个字段
+        # （报表/看板/界面都用 mix_detail 的 episodes），而它要按全局最新日期查，
+        # 对当天没采到的合集还会查到空列表 —— 纯浪费 N 次查询。
         r["account"] = r.get("author_name") or "-"
+        r["level"] = level_of(r.get("play_vv"), cfg)
+        r["level_label"] = level_label(r["level"], cfg)
+        r["first_publish_at"] = r.get("first_publish_at") or None
 
     stop_count = 0
     for r in rows:
@@ -41,11 +100,14 @@ def overview():
         a["play"] += r.get("play_vv") or 0
         a["delta"] += r.get("delta") or 0
 
+    s, h, t = _thresholds(cfg)
     return {
         "fetch_date": fd, "prev_date": pd_, "mixes": rows,
         "total_play": total_play, "total_delta": total_delta,
         "mix_count": len(rows), "stop_count": stop_count,
         "accounts": sorted(accounts.values(), key=lambda x: x["play"], reverse=True),
+        "thresholds": {"success": s, "high": h, "top": t},
+        "labels": {1: "达标", 2: _level_label(h), 3: _level_label(t)},
     }
 
 

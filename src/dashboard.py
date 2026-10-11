@@ -38,7 +38,7 @@ def _delta_html(d):
 
 def build_html(cfg=None):
     cfg = cfg or load_config()
-    ov = analyze.overview()
+    ov = analyze.overview(cfg)
     fd = ov.get("fetch_date") or "暂无数据"
 
     max_play = max([(r.get("play_vv") or 0) for r in ov["mixes"]] or [1]) or 1
@@ -48,14 +48,26 @@ def build_html(cfg=None):
     for r in ov["mixes"]:
         pv = r.get("play_vv") or 0
         w = round(pv / max_play * 100, 1)
+        lv = r.get("level") or 0
+        lv_cls = f" lv{lv}" if lv else ""
+        badge = (f'<span class="ctag lv{lv}">{_e(r.get("level_label"))}</span>'
+                 if r.get("level_label") else "")
+        pub = r.get("first_publish_at") or "—"
         cards.append(f"""
-        <div class="card">
+        <div class="card{lv_cls}" data-play="{pv}" data-date="{_e(r.get('first_publish_at') or '')}">
           <div class="cname" title="{_e(r.get('mix_name'))}">{_e(r.get('mix_name'))}</div>
-          <div class="cacct">{_e(r.get('account'))} · {r.get('episode_count') or 0} 集 · 更新至第 {r.get('updated_to_episode') or '-'} 集</div>
-          <div class="crow"><span class="cplay">{_fmt(pv)}</span>{_delta_html(r.get('delta'))}</div>
+          <div class="cacct">{_e(r.get('account'))} · 首发 {pub} · {r.get('episode_count') or 0} 集</div>
+          <div class="crow"><span class="cplay">{_fmt(pv)}</span>{badge}{_delta_html(r.get('delta'))}</div>
           <div class="bar"><i style="width:{w}%"></i></div>
-          <div class="cmeta">收藏 {r.get('collect_vv') or 0} · 分集求和校验 {_fmt(r.get('play_sum_calc'))}</div>
+          <div class="cmeta">收藏 {r.get('collect_vv') or 0} · 更新至第 {r.get('updated_to_episode') or '-'} 集 · 分集求和校验 {_fmt(r.get('play_sum_calc'))}</div>
         </div>""")
+
+    labels = ov.get("labels") or {}
+    legend_html = "".join(
+        f'<span><i style="background:{c}"></i>{_e(t)}</span>'
+        for c, t in (("#4c9aff", labels.get(1) or "达标"),
+                     ("#d98324", labels.get(2) or ""),
+                     ("#e5484d", labels.get(3) or "")) if t)
 
     # 分集明细
     ep_blocks = []
@@ -145,6 +157,19 @@ h2{{font-size:14px;font-weight:500;margin:26px 0 12px;padding-left:9px;border-le
 .bar{{height:5px;background:#2b2b2b;border-radius:3px;overflow:hidden;margin-bottom:7px}}
 .bar>i{{display:block;height:100%;background:#4c9aff}}
 .cmeta{{font-size:11.5px;color:#6f6f6f}}
+.card.lv1{{border-left:4px solid #4c9aff}}
+.card.lv2{{border-left:4px solid #d98324}}
+.card.lv3{{border-left:4px solid #e5484d}}
+.ctag{{display:inline-block;padding:1px 8px;border-radius:10px;font-size:11px;margin-left:7px;vertical-align:middle}}
+.ctag.lv1{{background:rgba(76,154,255,.15);color:#8ab8ff}}
+.ctag.lv2{{background:rgba(217,131,36,.16);color:#e5a95f}}
+.ctag.lv3{{background:rgba(229,72,77,.16);color:#ff8186}}
+.sortbar{{display:flex;align-items:center;gap:10px;margin:10px 0 12px;flex-wrap:wrap}}
+.sortbar select{{background:#191919;border:1px solid #373737;border-radius:6px;color:#ebebeb;padding:5px 10px;font-size:12.5px;font-family:inherit}}
+.sortbar .hint{{color:#6f6f6f;font-size:12px}}
+.legend{{display:flex;gap:12px;align-items:center;margin-left:auto;flex-wrap:wrap}}
+.legend i{{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:middle}}
+.legend span{{font-size:12px;color:#9b9b9b}}
 table{{width:100%;border-collapse:collapse;font-size:12.5px;background:#232323;border:1px solid #373737;border-radius:10px;overflow:hidden}}
 th{{text-align:left;padding:9px 12px;color:#9b9b9b;font-weight:400;font-size:12px;border-bottom:1px solid #373737;white-space:nowrap}}
 td{{padding:9px 12px;border-bottom:1px solid #2e2e2e}}
@@ -171,7 +196,17 @@ details table{{border:none;border-radius:0;border-top:1px solid #373737}}
 </div>
 
 <h2>合集排行</h2>
-<div class="cards">{''.join(cards) or '<p class="faint">暂无数据，先跑一次抓取。</p>'}</div>
+<div class="sortbar">
+  <span class="hint">排序</span>
+  <select id="sortSel">
+    <option value="play_desc">播放量 从高到低</option>
+    <option value="play_asc">播放量 从低到高</option>
+    <option value="date_desc">发布日期 最新在前</option>
+    <option value="date_asc">发布日期 最早在前</option>
+  </select>
+  <span class="legend">{legend_html}</span>
+</div>
+<div class="cards" id="cards">{''.join(cards) or '<p class="faint">暂无数据，先跑一次抓取。</p>'}</div>
 
 <h2>账号汇总</h2>
 <table><thead><tr><th>账号</th><th>合集数</th><th>总播放量</th><th>本次增量</th></tr></thead>
@@ -187,6 +222,27 @@ details table{{border:none;border-radius:0;border-top:1px solid #373737}}
 <script>
 var D = {data_json};
 document.getElementById('gen').textContent = D.generated_at;
+(function(){{
+  var box = document.getElementById('cards');
+  var sel = document.getElementById('sortSel');
+  if (!box || !sel) return;
+  sel.onchange = function(){{
+    var p = this.value.split('_');
+    var k = p[0], d = p[1];
+    var items = Array.prototype.slice.call(box.children);
+    items.sort(function(a, b){{
+      if (k === 'play') {{
+        return (Number(a.dataset.play) - Number(b.dataset.play)) * (d === 'desc' ? -1 : 1);
+      }}
+      var av = a.dataset.date || '', bv = b.dataset.date || '';
+      if (!av && !bv) return 0;
+      if (!av) return 1;
+      if (!bv) return -1;
+      return (av < bv ? -1 : av > bv ? 1 : 0) * (d === 'desc' ? -1 : 1);
+    }});
+    items.forEach(function(el){{ box.appendChild(el); }});
+  }};
+}})();
 </script>
 </body></html>"""
 

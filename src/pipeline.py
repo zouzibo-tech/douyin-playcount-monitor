@@ -57,7 +57,9 @@ def run_once(progress=None, log=None, should_stop=None, cfg=None):
     run_id = store.run_start(total)
     fd = store.today_str()
 
-    stat = {"total": total, "ok": 0, "failed": 0, "skipped": 0,
+    # no_mix = 视频本身不在任何合集（已处理）；skipped = 因中断没跑到的条数。
+    # 两者以前混在一个计数器里，看日志分不清是哪种。
+    stat = {"total": total, "ok": 0, "failed": 0, "skipped": 0, "no_mix": 0,
             "mixes": 0, "interrupted": False}
     if total == 0:
         log("清单为空，无需抓取")
@@ -80,6 +82,10 @@ def run_once(progress=None, log=None, should_stop=None, cfg=None):
 
     try:
         with DouyinCollector(cfg, log=log) as col:
+            # 连续失败计数：跑几百条时浏览器可能越跑越不稳，
+            # 达到阈值就重建一次。正常路径完全不触发。
+            restart_at = int(cfg.get("restart_after_fails", 5) or 0)
+            consecutive_fail = 0
             for idx, item in enumerate(items, 1):
                 if should_stop():
                     _interrupt("收到停止指令")
@@ -107,6 +113,7 @@ def run_once(progress=None, log=None, should_stop=None, cfg=None):
                         "episode_count": len(r.get("episodes") or []),
                     })
                     stat["ok"] += 1
+                    consecutive_fail = 0
                     log(f"({idx}/{total}) {url}  复用合集「{r.get('mix_name')}」")
                     continue
 
@@ -140,11 +147,24 @@ def run_once(progress=None, log=None, should_stop=None, cfg=None):
                     stat["failed"] += 1
                     failed_items.append(url)
                     store.update_watch_resolved(item["id"], {}, err)
+                    consecutive_fail += 1
                     log(f"({idx}/{total}) {url}  失败：{err}")
+                    if restart_at and consecutive_fail >= restart_at:
+                        consecutive_fail = 0
+                        log(f"   连续 {restart_at} 条失败，重建浏览器后继续 ...")
+                        try:
+                            col.close()
+                            col.start()
+                        except Exception as re:
+                            if _browser_gone(re):
+                                _interrupt("浏览器窗口已被关闭，本次任务提前结束")
+                                break
+                            log(f"   重建浏览器失败：{str(re)[:120]}")
                     continue
 
                 if not r.get("mix_id"):
-                    stat["skipped"] += 1
+                    # 与「因中断没跑到」区分：这类是视频本身没发布在任何合集里
+                    stat["no_mix"] += 1
                     store.update_watch_resolved(item["id"], {
                         "aweme_id": aid, "sec_uid": r.get("sec_uid"),
                         "author_name": r.get("author_name"),
@@ -152,6 +172,7 @@ def run_once(progress=None, log=None, should_stop=None, cfg=None):
                     log(f"({idx}/{total}) {url}  跳过：该视频未发布在任何合集中")
                     continue
 
+                consecutive_fail = 0
                 mid = r["mix_id"]
                 mix_data[mid] = r
                 if r.get("sec_uid"):
@@ -247,14 +268,19 @@ def run_once(progress=None, log=None, should_stop=None, cfg=None):
     elapsed = int(time.time() - t0)
     stat["elapsed"] = elapsed
     if interrupted:
-        if stat["ok"] + stat["failed"] + stat["skipped"] < total:
-            stat["skipped"] += total - stat["ok"] - stat["failed"] - stat["skipped"]
+        done = stat["ok"] + stat["failed"] + stat["skipped"] + stat["no_mix"]
+        if done < total:
+            stat["skipped"] += total - done
         status = "interrupted"
         head = "本次抓取被中断" if not should_stop() else "已手动停止"
     else:
         status = "done"
         head = "本次抓取结束"
-    msg = f"{head}。耗时 {elapsed}s；成功 {stat['ok']}，失败 {stat['failed']}，跳过 {stat['skipped']}"
+    msg = f"{head}。耗时 {elapsed}s；成功 {stat['ok']}，失败 {stat['failed']}"
+    if stat.get("no_mix"):
+        msg += f"，不在合集 {stat['no_mix']}"
+    if stat["skipped"]:
+        msg += f"，未采集 {stat['skipped']}"
     if failed_items:
         msg += "；失败链接：" + "、".join(failed_items[:10])
     store.run_finish(run_id, stat["ok"], stat["failed"], stat["skipped"], status, msg)
